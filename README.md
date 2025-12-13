@@ -1,6 +1,6 @@
-# SignalK Open-Meteo Weather Plugin
+# SignalK openmeteo Weather Plugin
 
-A SignalK plugin that provides position-based weather and marine forecast data from the [Open-Meteo API](https://open-meteo.com/). Compliant with the SignalK Weather API v2.
+A SignalK plugin that provides position-based weather and marine forecast data from the [openmeteo API](https://openmeteo.com/). Compliant with the SignalK Weather API v2.
 
 ## Features
 
@@ -17,15 +17,15 @@ A SignalK plugin that provides position-based weather and marine forecast data f
 ### From npm
 
 ```bash
-npm install signalk-open-meteo
+npm install signalk-openmeteo
 ```
 
 ### From source
 
 ```bash
 cd ~/.signalk/node_modules
-git clone https://github.com/motamman/signalk-open-meteo.git
-cd signalk-open-meteo
+git clone https://github.com/motamman/signalk-openmeteo.git
+cd signalk-openmeteo
 npm install
 npm run build
 ```
@@ -61,14 +61,14 @@ GET /signalk/v2/api/weather/_providers
 ### Get Forecasts
 
 ```
-GET /signalk/v2/api/weather/forecasts/point?provider=signalk-open-meteo
-GET /signalk/v2/api/weather/forecasts/daily?provider=signalk-open-meteo
+GET /signalk/v2/api/weather/forecasts/point?provider=signalk-openmeteo
+GET /signalk/v2/api/weather/forecasts/daily?provider=signalk-openmeteo
 ```
 
 ### Get Observations
 
 ```
-GET /signalk/v2/api/weather/observations?provider=signalk-open-meteo
+GET /signalk/v2/api/weather/observations?provider=signalk-openmeteo
 ```
 
 ## SignalK Data Paths
@@ -148,9 +148,9 @@ All data is published under `environment.outside.openmeteo.forecast.*` using Sig
 
 ### Field Name Mapping
 
-This plugin translates Open-Meteo API field names to SignalK-aligned camelCase names for consistency with other SignalK weather plugins:
+This plugin translates openmeteo API field names to SignalK-aligned camelCase names for consistency with other SignalK weather plugins:
 
-| Open-Meteo API | SignalK Path |
+| openmeteo API | SignalK Path |
 |----------------|--------------|
 | `temperature_2m` | `airTemperature` |
 | `wind_speed_10m` | `windAvg` |
@@ -215,14 +215,14 @@ All data is converted to SignalK base units:
 
 ## API Rate Limits
 
-Open-Meteo offers generous free tier:
+openmeteo offers generous free tier:
 - No API key required for non-commercial use
 - No strict rate limits documented
 - Commercial use requires API key
 
 ## Data Sources
 
-Open-Meteo aggregates data from multiple weather models:
+openmeteo aggregates data from multiple weather models:
 - ECMWF
 - NOAA GFS
 - Météo-France
@@ -241,6 +241,6 @@ Maurice Tamman
 
 ## Links
 
-- [Open-Meteo Documentation](https://open-meteo.com/en/docs)
-- [Open-Meteo Marine API](https://open-meteo.com/en/docs/marine-weather-api)
+- [openmeteo Documentation](https://openmeteo.com/en/docs)
+- [openmeteo Marine API](https://openmeteo.com/en/docs/marine-weather-api)
 - [SignalK Weather API Specification](https://signalk.org/specification/1.5.0/doc/weather_api.html)
