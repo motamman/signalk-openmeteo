@@ -1202,82 +1202,82 @@ export = function (app: SignalKApp): SignalKPlugin {
     return forecasts;
   };
 
-  // Publish hourly forecasts for a single package (weather or marine) - batched into one delta
+  // Publish hourly forecasts for a single package (weather or marine)
   const publishHourlyPackage = (
     forecasts: Record<string, any>[],
     packageType: string,
   ): void => {
     const sourceLabel = getSourceLabel(`hourly-${packageType}`);
-    const allValues: { path: string; value: any }[] = [];
-    const allMeta: { path: string; value: any }[] = [];
 
-    // Collect all values from all hours into single arrays
     forecasts.forEach((forecast, index) => {
+      const values: { path: string; value: any }[] = [];
+      const meta: { path: string; value: any }[] = [];
+
       Object.entries(forecast).forEach(([key, value]) => {
         if (key === "timestamp" || key === "relativeHour") return;
         const path = `environment.outside.openmeteo.forecast.hourly.${key}.${index}`;
         const metadata = getParameterMetadata(key);
-        allValues.push({ path, value });
-        allMeta.push({ path, value: metadata });
+        values.push({ path, value });
+        meta.push({ path, value: metadata });
       });
+
+      if (values.length === 0) return;
+
+      const delta: SignalKDelta = {
+        context: "vessels.self",
+        updates: [
+          {
+            $source: sourceLabel,
+            timestamp: forecast.timestamp || new Date().toISOString(),
+            values,
+            meta,
+          },
+        ],
+      };
+
+      app.handleMessage(plugin.id, delta);
     });
 
-    if (allValues.length === 0) return;
-
-    // Send all values in one delta message
-    const delta: SignalKDelta = {
-      context: "vessels.self",
-      updates: [
-        {
-          $source: sourceLabel,
-          timestamp: new Date().toISOString(),
-          values: allValues,
-          meta: allMeta,
-        },
-      ],
-    };
-
-    app.handleMessage(plugin.id, delta);
-    app.debug(`Published ${forecasts.length} hourly ${packageType} forecasts (${allValues.length} values in 1 message)`);
+    app.debug(`Published ${forecasts.length} hourly ${packageType} forecasts`);
   };
 
-  // Publish daily forecasts for a single package (weather or marine) - batched into one delta
+  // Publish daily forecasts for a single package (weather or marine)
   const publishDailyPackage = (
     forecasts: Record<string, any>[],
     packageType: string,
   ): void => {
     const sourceLabel = getSourceLabel(`daily-${packageType}`);
-    const allValues: { path: string; value: any }[] = [];
-    const allMeta: { path: string; value: any }[] = [];
 
-    // Collect all values from all days into single arrays
     forecasts.forEach((forecast, index) => {
+      const values: { path: string; value: any }[] = [];
+      const meta: { path: string; value: any }[] = [];
+
       Object.entries(forecast).forEach(([key, value]) => {
         if (key === "date" || key === "dayIndex") return;
         const path = `environment.outside.openmeteo.forecast.daily.${key}.${index}`;
         const metadata = getParameterMetadata(key);
-        allValues.push({ path, value });
-        allMeta.push({ path, value: metadata });
+        values.push({ path, value });
+        meta.push({ path, value: metadata });
       });
+
+      if (values.length === 0) return;
+
+      const delta: SignalKDelta = {
+        context: "vessels.self",
+        updates: [
+          {
+            $source: sourceLabel,
+            timestamp: new Date().toISOString(),
+            values,
+            meta,
+          },
+        ],
+      };
+
+      app.handleMessage(plugin.id, delta);
     });
 
-    if (allValues.length === 0) return;
-
-    // Send all values in one delta message
-    const delta: SignalKDelta = {
-      context: "vessels.self",
-      updates: [
-        {
-          $source: sourceLabel,
-          timestamp: new Date().toISOString(),
-          values: allValues,
-          meta: allMeta,
-        },
-      ],
-    };
-
-    app.handleMessage(plugin.id, delta);
-    app.debug(`Published ${forecasts.length} daily ${packageType} forecasts (${allValues.length} values in 1 message)`);
+    app.debug(`Published ${forecasts.length} daily ${packageType} forecasts`);
   };
 
   // Fetch forecasts for a moving vessel (position-specific forecasts along predicted route)
@@ -1816,7 +1816,7 @@ export = function (app: SignalKApp): SignalKPlugin {
 
   // Weather API provider
   const weatherProvider: WeatherProvider = {
-    name: "signalk-open-meteo",
+    name: "Openmeteo Weather",
     methods: {
       pluginId: plugin.id,
       getObservations: async (
