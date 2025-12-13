@@ -103,12 +103,14 @@ export = function (app: SignalKApp): SignalKPlugin {
   };
 
   // Get icon name from WMO code
+  // isDay: true/1 = day, false/0 = night, undefined = default to day (for daily forecasts)
   const getWeatherIcon = (
     wmoCode: number | undefined,
     isDay: boolean | number | undefined,
   ): string | undefined => {
     if (wmoCode === undefined) return undefined;
-    const dayNight = isDay === true || isDay === 1 ? "day" : "night";
+    // Default to day if isDay is undefined (e.g., daily forecasts don't have is_day field)
+    const dayNight = isDay === false || isDay === 0 ? "night" : "day";
     return `wmo_${wmoCode}_${dayNight}.svg`;
   };
 
@@ -229,6 +231,7 @@ export = function (app: SignalKApp): SignalKPlugin {
 
   // Utility functions
   const degToRad = (degrees: number): number => degrees * (Math.PI / 180);
+  const radToDeg = (radians: number): number => radians * (180 / Math.PI);
   const celsiusToKelvin = (celsius: number): number => celsius + 273.15;
   const hPaToPA = (hPa: number): number => hPa * 100;
   const mmToM = (mm: number): number => mm / 1000;
@@ -236,6 +239,160 @@ export = function (app: SignalKApp): SignalKPlugin {
   const kmToM = (km: number): number => km * 1000;
   const kmhToMs = (kmh: number): number => kmh / 3.6;
   const percentToRatio = (percent: number): number => percent / 100;
+
+  // Field name translation: Open-Meteo API names → SignalK-aligned names (following signalk-weatherflow convention)
+  const fieldNameMap: Record<string, string> = {
+    // Temperature fields
+    temperature_2m: "airTemperature",
+    apparent_temperature: "feelsLike",
+    dew_point_2m: "dewPoint",
+    temperature_2m_max: "airTempHigh",
+    temperature_2m_min: "airTempLow",
+    apparent_temperature_max: "feelsLikeHigh",
+    apparent_temperature_min: "feelsLikeLow",
+    sea_surface_temperature: "seaSurfaceTemperature",
+
+    // Wind fields
+    wind_speed_10m: "windAvg",
+    wind_direction_10m: "windDirection",
+    wind_gusts_10m: "windGust",
+    wind_speed_10m_max: "windAvgMax",
+    wind_gusts_10m_max: "windGustMax",
+    wind_direction_10m_dominant: "windDirectionDominant",
+
+    // Pressure fields
+    pressure_msl: "seaLevelPressure",
+    surface_pressure: "stationPressure",
+
+    // Humidity fields
+    relative_humidity_2m: "relativeHumidity",
+
+    // Precipitation fields
+    precipitation: "precip",
+    precipitation_probability: "precipProbability",
+    precipitation_sum: "precipSum",
+    precipitation_probability_max: "precipProbabilityMax",
+    precipitation_hours: "precipHours",
+    rain: "rain",
+    rain_sum: "rainSum",
+    showers: "showers",
+    showers_sum: "showersSum",
+    snowfall: "snowfall",
+    snowfall_sum: "snowfallSum",
+
+    // Cloud cover fields
+    cloud_cover: "cloudCover",
+    cloud_cover_low: "lowCloudCover",
+    cloud_cover_mid: "midCloudCover",
+    cloud_cover_high: "highCloudCover",
+
+    // Solar/UV fields
+    uv_index: "uvIndex",
+    uv_index_max: "uvIndexMax",
+    shortwave_radiation: "solarRadiation",
+    shortwave_radiation_sum: "solarRadiationSum",
+    direct_radiation: "directRadiation",
+    diffuse_radiation: "diffuseRadiation",
+    direct_normal_irradiance: "irradianceDirectNormal",
+    sunshine_duration: "sunshineDuration",
+    daylight_duration: "daylightDuration",
+
+    // Marine/Wave fields
+    wave_height: "significantWaveHeight",
+    wave_height_max: "significantWaveHeightMax",
+    wave_direction: "meanWaveDirection",
+    wave_direction_dominant: "meanWaveDirectionDominant",
+    wave_period: "meanWavePeriod",
+    wave_period_max: "meanWavePeriodMax",
+    wind_wave_height: "windWaveHeight",
+    wind_wave_height_max: "windWaveHeightMax",
+    wind_wave_direction: "windWaveDirection",
+    wind_wave_direction_dominant: "windWaveDirectionDominant",
+    wind_wave_period: "windWavePeriod",
+    wind_wave_period_max: "windWavePeriodMax",
+    wind_wave_peak_period: "windWavePeakPeriod",
+    wind_wave_peak_period_max: "windWavePeakPeriodMax",
+    swell_wave_height: "swellSignificantHeight",
+    swell_wave_height_max: "swellSignificantHeightMax",
+    swell_wave_direction: "swellMeanDirection",
+    swell_wave_direction_dominant: "swellMeanDirectionDominant",
+    swell_wave_period: "swellMeanPeriod",
+    swell_wave_period_max: "swellMeanPeriodMax",
+    swell_wave_peak_period: "swellPeakPeriod",
+    swell_wave_peak_period_max: "swellPeakPeriodMax",
+    ocean_current_velocity: "currentVelocity",
+    ocean_current_direction: "currentDirection",
+
+    // Other fields
+    visibility: "visibility",
+    is_day: "isDaylight",
+    weather_code: "weatherCode",
+    cape: "cape",
+    sunrise: "sunrise",
+    sunset: "sunset",
+  };
+
+  // Translate Open-Meteo field name to SignalK-aligned name
+  const translateFieldName = (openMeteoName: string): string => {
+    return fieldNameMap[openMeteoName] || openMeteoName;
+  };
+
+  // Reverse lookup: SignalK name to Open-Meteo name (for reading back from SignalK)
+  const reverseFieldNameMap: Record<string, string> = Object.entries(
+    fieldNameMap,
+  ).reduce(
+    (acc, [openMeteo, signalk]) => {
+      acc[signalk] = openMeteo;
+      return acc;
+    },
+    {} as Record<string, string>,
+  );
+
+  // Calculate future position based on current heading and speed
+  const calculateFuturePosition = (
+    currentPos: Position,
+    headingRad: number,
+    sogMps: number,
+    hoursAhead: number,
+  ): Position => {
+    const distanceMeters = sogMps * hoursAhead * 3600;
+    const earthRadius = 6371000;
+
+    const lat1 = degToRad(currentPos.latitude);
+    const lon1 = degToRad(currentPos.longitude);
+
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(distanceMeters / earthRadius) +
+        Math.cos(lat1) *
+          Math.sin(distanceMeters / earthRadius) *
+          Math.cos(headingRad),
+    );
+
+    const lon2 =
+      lon1 +
+      Math.atan2(
+        Math.sin(headingRad) *
+          Math.sin(distanceMeters / earthRadius) *
+          Math.cos(lat1),
+        Math.cos(distanceMeters / earthRadius) -
+          Math.sin(lat1) * Math.sin(lat2),
+      );
+
+    return {
+      latitude: radToDeg(lat2),
+      longitude: radToDeg(lon2),
+      timestamp: new Date(Date.now() + hoursAhead * 3600000),
+    };
+  };
+
+  // Check if vessel is moving above threshold
+  const isVesselMoving = (
+    sogMps: number,
+    thresholdKnots: number = 1.0,
+  ): boolean => {
+    const thresholdMps = thresholdKnots * 0.514444;
+    return sogMps > thresholdMps;
+  };
 
   // Build Open-Meteo Weather API URL
   const buildWeatherUrl = (
@@ -455,96 +612,131 @@ export = function (app: SignalKApp): SignalKPlugin {
     }
   };
 
-  // Get source label for SignalK
-  const getSourceLabel = (dataType: string): string => {
-    return `open-meteo.${dataType}`;
+  // Get source label for SignalK (following weatherflow/meteo pattern)
+  const getSourceLabel = (packageType: string): string => {
+    return `openmeteo-${packageType}-api`;
   };
 
-  // Get parameter metadata for SignalK
+  // Get parameter metadata for SignalK (using SignalK-aligned field names)
   const getParameterMetadata = (parameterName: string): any => {
     const metadataMap: Record<string, any> = {
       // Temperature parameters (SignalK compliant - Kelvin)
-      temperature_2m: {
+      airTemperature: {
         units: "K",
         displayName: "Temperature",
         description: "Air temperature at 2m height",
       },
-      apparent_temperature: {
+      feelsLike: {
         units: "K",
         displayName: "Feels Like Temperature",
         description: "Apparent temperature considering wind and humidity",
       },
-      dew_point_2m: {
+      dewPoint: {
         units: "K",
         displayName: "Dew Point",
         description: "Dew point temperature at 2m height",
       },
-      sea_surface_temperature: {
+      seaSurfaceTemperature: {
         units: "K",
         displayName: "Sea Surface Temperature",
         description: "Sea surface temperature",
       },
+      airTempHigh: {
+        units: "K",
+        displayName: "High Temperature",
+        description: "Maximum air temperature",
+      },
+      airTempLow: {
+        units: "K",
+        displayName: "Low Temperature",
+        description: "Minimum air temperature",
+      },
+      feelsLikeHigh: {
+        units: "K",
+        displayName: "Feels Like High",
+        description: "Maximum apparent temperature",
+      },
+      feelsLikeLow: {
+        units: "K",
+        displayName: "Feels Like Low",
+        description: "Minimum apparent temperature",
+      },
 
       // Wind parameters (SignalK compliant - m/s, radians)
-      wind_speed_10m: {
+      windAvg: {
         units: "m/s",
         displayName: "Wind Speed",
         description: "Wind speed at 10m height",
       },
-      wind_gusts_10m: {
+      windGust: {
         units: "m/s",
         displayName: "Wind Gusts",
         description: "Wind gust speed at 10m height",
       },
-      wind_direction_10m: {
+      windDirection: {
         units: "rad",
         displayName: "Wind Direction",
         description: "Wind direction at 10m height",
       },
+      windAvgMax: {
+        units: "m/s",
+        displayName: "Max Wind Speed",
+        description: "Maximum wind speed",
+      },
+      windGustMax: {
+        units: "m/s",
+        displayName: "Max Wind Gusts",
+        description: "Maximum wind gust speed",
+      },
+      windDirectionDominant: {
+        units: "rad",
+        displayName: "Dominant Wind Direction",
+        description: "Dominant wind direction",
+      },
 
       // Pressure parameters (SignalK compliant - Pascal)
-      pressure_msl: {
+      seaLevelPressure: {
         units: "Pa",
         displayName: "Sea Level Pressure",
         description: "Atmospheric pressure at mean sea level",
       },
-      surface_pressure: {
+      stationPressure: {
         units: "Pa",
         displayName: "Surface Pressure",
         description: "Atmospheric pressure at surface",
       },
 
       // Humidity (SignalK compliant - ratio 0-1)
-      relative_humidity_2m: {
+      relativeHumidity: {
         units: "ratio",
         displayName: "Relative Humidity",
         description: "Relative humidity at 2m height (0-1)",
       },
 
       // Cloud cover (SignalK compliant - ratio 0-1)
-      cloud_cover: {
+      cloudCover: {
         units: "ratio",
         displayName: "Cloud Cover",
         description: "Total cloud cover (0-1)",
       },
-      cloud_cover_low: {
+      lowCloudCover: {
         units: "ratio",
         displayName: "Low Cloud Cover",
         description: "Low altitude cloud cover (0-1)",
       },
-      cloud_cover_mid: {
+      midCloudCover: {
         units: "ratio",
         displayName: "Mid Cloud Cover",
         description: "Mid altitude cloud cover (0-1)",
       },
-      cloud_cover_high: {
+      highCloudCover: {
         units: "ratio",
         displayName: "High Cloud Cover",
         description: "High altitude cloud cover (0-1)",
       },
 
       // Precipitation (SignalK compliant - meters)
-      precipitation: {
+      precip: {
         units: "m",
         displayName: "Precipitation",
         description: "Precipitation amount",
@@ -559,10 +751,20 @@ export = function (app: SignalKApp): SignalKPlugin {
         displayName: "Snowfall",
         description: "Snowfall amount",
       },
-      precipitation_probability: {
+      precipProbability: {
         units: "ratio",
         displayName: "Precipitation Probability",
         description: "Probability of precipitation (0-1)",
+      },
+      precipSum: {
+        units: "m",
+        displayName: "Precipitation Sum",
+        description: "Total precipitation amount",
+      },
+      precipProbabilityMax: {
+        units: "ratio",
+        displayName: "Max Precipitation Probability",
+        description: "Maximum probability of precipitation (0-1)",
       },
 
       // Visibility (SignalK compliant - meters)
@@ -573,108 +775,180 @@ export = function (app: SignalKApp): SignalKPlugin {
       },
 
       // Wave parameters (meters, seconds, radians)
-      wave_height: {
+      significantWaveHeight: {
         units: "m",
         displayName: "Wave Height",
         description: "Significant wave height",
       },
-      wave_period: {
+      significantWaveHeightMax: {
+        units: "m",
+        displayName: "Max Wave Height",
+        description: "Maximum significant wave height",
+      },
+      meanWavePeriod: {
         units: "s",
         displayName: "Wave Period",
-        description: "Wave period",
+        description: "Mean wave period",
       },
-      wave_direction: {
+      meanWavePeriodMax: {
+        units: "s",
+        displayName: "Max Wave Period",
+        description: "Maximum wave period",
+      },
+      meanWaveDirection: {
         units: "rad",
         displayName: "Wave Direction",
-        description: "Wave direction",
+        description: "Mean wave direction",
       },
-      wind_wave_height: {
+      meanWaveDirectionDominant: {
+        units: "rad",
+        displayName: "Dominant Wave Direction",
+        description: "Dominant wave direction",
+      },
+      windWaveHeight: {
         units: "m",
         displayName: "Wind Wave Height",
         description: "Wind-generated wave height",
       },
-      wind_wave_period: {
+      windWaveHeightMax: {
+        units: "m",
+        displayName: "Max Wind Wave Height",
+        description: "Maximum wind-generated wave height",
+      },
+      windWavePeriod: {
         units: "s",
         displayName: "Wind Wave Period",
         description: "Wind-generated wave period",
       },
-      wind_wave_direction: {
+      windWaveDirection: {
         units: "rad",
         displayName: "Wind Wave Direction",
         description: "Wind-generated wave direction",
       },
-      swell_wave_height: {
+      windWaveDirectionDominant: {
+        units: "rad",
+        displayName: "Dominant Wind Wave Direction",
+        description: "Dominant wind-generated wave direction",
+      },
+      windWavePeakPeriod: {
+        units: "s",
+        displayName: "Wind Wave Peak Period",
+        description: "Peak period of wind-generated waves",
+      },
+      swellSignificantHeight: {
         units: "m",
         displayName: "Swell Height",
         description: "Swell wave height",
       },
-      swell_wave_period: {
+      swellSignificantHeightMax: {
+        units: "m",
+        displayName: "Max Swell Height",
+        description: "Maximum swell wave height",
+      },
+      swellMeanPeriod: {
         units: "s",
         displayName: "Swell Period",
         description: "Swell wave period",
       },
-      swell_wave_direction: {
+      swellMeanPeriodMax: {
+        units: "s",
+        displayName: "Max Swell Period",
+        description: "Maximum swell wave period",
+      },
+      swellMeanDirection: {
         units: "rad",
         displayName: "Swell Direction",
         description: "Swell wave direction",
       },
+      swellMeanDirectionDominant: {
+        units: "rad",
+        displayName: "Dominant Swell Direction",
+        description: "Dominant swell wave direction",
+      },
+      swellPeakPeriod: {
+        units: "s",
+        displayName: "Swell Peak Period",
+        description: "Peak period of swell waves",
+      },
 
       // Ocean currents
-      ocean_current_velocity: {
+      currentVelocity: {
         units: "m/s",
         displayName: "Current Speed",
         description: "Ocean current velocity",
       },
-      ocean_current_direction: {
+      currentDirection: {
         units: "rad",
         displayName: "Current Direction",
         description: "Ocean current direction",
       },
 
       // Solar radiation
-      shortwave_radiation: {
+      solarRadiation: {
         units: "W/m2",
         displayName: "Solar Radiation",
         description: "Shortwave solar radiation",
       },
-      direct_radiation: {
+      solarRadiationSum: {
+        units: "J/m2",
+        displayName: "Total Solar Radiation",
+        description: "Total shortwave solar radiation",
+      },
+      directRadiation: {
         units: "W/m2",
         displayName: "Direct Radiation",
         description: "Direct solar radiation",
       },
-      diffuse_radiation: {
+      diffuseRadiation: {
         units: "W/m2",
         displayName: "Diffuse Radiation",
         description: "Diffuse solar radiation",
       },
-      direct_normal_irradiance: {
+      irradianceDirectNormal: {
         units: "W/m2",
         displayName: "Direct Normal Irradiance",
         description: "Direct normal solar irradiance",
       },
 
       // Other
-      uv_index: {
+      uvIndex: {
         displayName: "UV Index",
         description: "UV index",
       },
-      weather_code: {
+      uvIndexMax: {
+        displayName: "Max UV Index",
+        description: "Maximum UV index",
+      },
+      weatherCode: {
         displayName: "Weather Code",
         description: "WMO weather interpretation code",
       },
-      is_day: {
-        displayName: "Is Day",
+      isDaylight: {
+        displayName: "Is Daylight",
         description: "Whether it is day (1) or night (0)",
       },
-      sunshine_duration: {
+      sunshineDuration: {
         units: "s",
         displayName: "Sunshine Duration",
         description: "Duration of sunshine",
+      },
+      daylightDuration: {
+        units: "s",
+        displayName: "Daylight Duration",
+        description: "Duration of daylight",
       },
       cape: {
         units: "J/kg",
         displayName: "CAPE",
         description: "Convective Available Potential Energy",
+      },
+      sunrise: {
+        displayName: "Sunrise",
+        description: "Sunrise time",
+      },
+      sunset: {
+        displayName: "Sunset",
+        description: "Sunset time",
       },
     };
 
@@ -686,34 +960,37 @@ export = function (app: SignalKApp): SignalKPlugin {
     let units = "";
     let description = `${parameterName} forecast parameter`;
 
-    if (parameterName.includes("temperature")) {
+    if (parameterName.includes("Temp") || parameterName.includes("temperature")) {
       units = "K";
       description = "Temperature forecast";
-    } else if (parameterName.includes("speed") || parameterName.includes("velocity")) {
+    } else if (parameterName.includes("wind") && (parameterName.includes("Avg") || parameterName.includes("Gust"))) {
+      units = "m/s";
+      description = "Wind speed forecast";
+    } else if (parameterName.includes("Velocity") || parameterName.includes("velocity")) {
       units = "m/s";
       description = "Speed forecast";
-    } else if (parameterName.includes("pressure")) {
+    } else if (parameterName.includes("Pressure") || parameterName.includes("pressure")) {
       units = "Pa";
       description = "Pressure forecast";
-    } else if (parameterName.includes("humidity")) {
+    } else if (parameterName.includes("Humidity") || parameterName.includes("humidity")) {
       units = "ratio";
       description = "Humidity forecast (0-1)";
-    } else if (parameterName.includes("precipitation") && !parameterName.includes("probability") && !parameterName.includes("hours")) {
+    } else if (parameterName.includes("precip") && !parameterName.includes("Probability")) {
       units = "m";
       description = "Precipitation forecast";
-    } else if (parameterName.includes("probability")) {
+    } else if (parameterName.includes("Probability") || parameterName.includes("Cover")) {
       units = "ratio";
-      description = "Probability forecast (0-1)";
-    } else if (parameterName.includes("direction")) {
+      description = "Ratio forecast (0-1)";
+    } else if (parameterName.includes("Direction") || parameterName.includes("direction")) {
       units = "rad";
       description = "Direction forecast";
-    } else if (parameterName.includes("visibility")) {
+    } else if (parameterName.includes("visibility") || parameterName.includes("Visibility")) {
       units = "m";
       description = "Visibility forecast";
-    } else if (parameterName.includes("height")) {
+    } else if (parameterName.includes("Height") || parameterName.includes("height")) {
       units = "m";
       description = "Height forecast";
-    } else if (parameterName.includes("period")) {
+    } else if (parameterName.includes("Period") || parameterName.includes("period")) {
       units = "s";
       description = "Period forecast";
     }
@@ -749,30 +1026,33 @@ export = function (app: SignalKApp): SignalKPlugin {
         relativeHour: i,
       };
 
-      // Process each field with unit conversions
+      // Process each field with unit conversions and translate field names
       Object.entries(hourly).forEach(([field, values]) => {
         if (field === "time" || !Array.isArray(values)) return;
         const value = values[dataIndex];
         if (value === undefined || value === null) return;
 
+        // Translate field name to SignalK-aligned name
+        const translatedField = translateFieldName(field);
+
         // Apply unit conversions
         if (field.includes("temperature") || field === "dew_point_2m" || field === "apparent_temperature") {
-          forecast[field] = celsiusToKelvin(value as number);
+          forecast[translatedField] = celsiusToKelvin(value as number);
         } else if (field.includes("direction")) {
-          forecast[field] = degToRad(value as number);
+          forecast[translatedField] = degToRad(value as number);
         } else if (field === "precipitation" || field === "rain" || field === "showers") {
-          forecast[field] = mmToM(value as number);
+          forecast[translatedField] = mmToM(value as number);
         } else if (field === "snowfall") {
-          forecast[field] = cmToM(value as number); // Snowfall is in cm
+          forecast[translatedField] = cmToM(value as number); // Snowfall is in cm
         } else if (field.includes("pressure")) {
-          forecast[field] = hPaToPA(value as number);
+          forecast[translatedField] = hPaToPA(value as number);
         } else if (field.includes("humidity") || field.includes("cloud_cover") || field === "precipitation_probability") {
-          forecast[field] = percentToRatio(value as number);
+          forecast[translatedField] = percentToRatio(value as number);
         } else if (field === "visibility") {
           // Visibility is already in meters from Open-Meteo
-          forecast[field] = value;
+          forecast[translatedField] = value;
         } else {
-          forecast[field] = value;
+          forecast[translatedField] = value;
         }
       });
 
@@ -799,25 +1079,28 @@ export = function (app: SignalKApp): SignalKPlugin {
         dayIndex: i,
       };
 
-      // Process each field with unit conversions
+      // Process each field with unit conversions and translate field names
       Object.entries(daily).forEach(([field, values]) => {
         if (field === "time" || !Array.isArray(values)) return;
         const value = values[i];
         if (value === undefined || value === null) return;
 
+        // Translate field name to SignalK-aligned name
+        const translatedField = translateFieldName(field);
+
         // Apply unit conversions
         if (field.includes("temperature")) {
-          forecast[field] = celsiusToKelvin(value as number);
+          forecast[translatedField] = celsiusToKelvin(value as number);
         } else if (field.includes("direction")) {
-          forecast[field] = degToRad(value as number);
+          forecast[translatedField] = degToRad(value as number);
         } else if (field === "precipitation_sum" || field === "rain_sum" || field === "showers_sum") {
-          forecast[field] = mmToM(value as number);
+          forecast[translatedField] = mmToM(value as number);
         } else if (field === "snowfall_sum") {
-          forecast[field] = cmToM(value as number);
+          forecast[translatedField] = cmToM(value as number);
         } else if (field === "precipitation_probability_max") {
-          forecast[field] = percentToRatio(value as number);
+          forecast[translatedField] = percentToRatio(value as number);
         } else {
-          forecast[field] = value;
+          forecast[translatedField] = value;
         }
       });
 
@@ -851,22 +1134,25 @@ export = function (app: SignalKApp): SignalKPlugin {
         relativeHour: i,
       };
 
-      // Process each field with unit conversions
+      // Process each field with unit conversions and translate field names
       Object.entries(hourly).forEach(([field, values]) => {
         if (field === "time" || !Array.isArray(values)) return;
         const value = values[dataIndex];
         if (value === undefined || value === null) return;
 
+        // Translate field name to SignalK-aligned name
+        const translatedField = translateFieldName(field);
+
         // Apply unit conversions
         if (field === "sea_surface_temperature") {
-          forecast[field] = celsiusToKelvin(value as number);
+          forecast[translatedField] = celsiusToKelvin(value as number);
         } else if (field.includes("direction")) {
-          forecast[field] = degToRad(value as number);
+          forecast[translatedField] = degToRad(value as number);
         } else if (field === "ocean_current_velocity") {
-          forecast[field] = kmhToMs(value as number); // Current velocity is in km/h
+          forecast[translatedField] = kmhToMs(value as number); // Current velocity is in km/h
         } else {
           // Wave heights, periods are already in meters/seconds
-          forecast[field] = value;
+          forecast[translatedField] = value;
         }
       });
 
@@ -893,17 +1179,20 @@ export = function (app: SignalKApp): SignalKPlugin {
         dayIndex: i,
       };
 
-      // Process each field with unit conversions
+      // Process each field with unit conversions and translate field names
       Object.entries(daily).forEach(([field, values]) => {
         if (field === "time" || !Array.isArray(values)) return;
         const value = values[i];
         if (value === undefined || value === null) return;
 
+        // Translate field name to SignalK-aligned name
+        const translatedField = translateFieldName(field);
+
         // Apply unit conversions
         if (field.includes("direction")) {
-          forecast[field] = degToRad(value as number);
+          forecast[translatedField] = degToRad(value as number);
         } else {
-          forecast[field] = value;
+          forecast[translatedField] = value;
         }
       });
 
@@ -913,88 +1202,335 @@ export = function (app: SignalKApp): SignalKPlugin {
     return forecasts;
   };
 
-  // Publish hourly forecasts for a single package (weather or marine)
-  const publishHourlyPackage = async (
+  // Publish hourly forecasts for a single package (weather or marine) - batched into one delta
+  const publishHourlyPackage = (
     forecasts: Record<string, any>[],
     packageType: string,
-  ): Promise<void> => {
+  ): void => {
     const sourceLabel = getSourceLabel(`hourly-${packageType}`);
+    const allValues: { path: string; value: any }[] = [];
+    const allMeta: { path: string; value: any }[] = [];
 
-    for (let index = 0; index < forecasts.length; index++) {
-      const forecast = forecasts[index];
-      const values: { path: string; value: any }[] = [];
-      const meta: { path: string; value: any }[] = [];
-
+    // Collect all values from all hours into single arrays
+    forecasts.forEach((forecast, index) => {
       Object.entries(forecast).forEach(([key, value]) => {
         if (key === "timestamp" || key === "relativeHour") return;
         const path = `environment.outside.openmeteo.forecast.hourly.${key}.${index}`;
         const metadata = getParameterMetadata(key);
-        values.push({ path, value });
-        meta.push({ path, value: metadata });
+        allValues.push({ path, value });
+        allMeta.push({ path, value: metadata });
       });
+    });
 
-      if (values.length === 0) continue;
+    if (allValues.length === 0) return;
 
-      const delta: SignalKDelta = {
-        context: "vessels.self",
-        updates: [
-          {
-            $source: sourceLabel,
-            timestamp: forecast.timestamp || new Date().toISOString(),
-            values,
-            meta,
-          },
-        ],
-      };
+    // Send all values in one delta message
+    const delta: SignalKDelta = {
+      context: "vessels.self",
+      updates: [
+        {
+          $source: sourceLabel,
+          timestamp: new Date().toISOString(),
+          values: allValues,
+          meta: allMeta,
+        },
+      ],
+    };
 
-      app.handleMessage(plugin.id, delta);
-
-      // Yield to event loop every 10 messages to prevent blocking
-      if (index % 10 === 9) {
-        await new Promise((resolve) => setImmediate(resolve));
-      }
-    }
-
-    app.debug(`Published ${forecasts.length} hourly ${packageType} forecasts`);
+    app.handleMessage(plugin.id, delta);
+    app.debug(`Published ${forecasts.length} hourly ${packageType} forecasts (${allValues.length} values in 1 message)`);
   };
 
-  // Publish daily forecasts for a single package (weather or marine)
+  // Publish daily forecasts for a single package (weather or marine) - batched into one delta
   const publishDailyPackage = (
     forecasts: Record<string, any>[],
     packageType: string,
   ): void => {
     const sourceLabel = getSourceLabel(`daily-${packageType}`);
+    const allValues: { path: string; value: any }[] = [];
+    const allMeta: { path: string; value: any }[] = [];
 
+    // Collect all values from all days into single arrays
     forecasts.forEach((forecast, index) => {
-      const values: { path: string; value: any }[] = [];
-      const meta: { path: string; value: any }[] = [];
-
       Object.entries(forecast).forEach(([key, value]) => {
         if (key === "date" || key === "dayIndex") return;
         const path = `environment.outside.openmeteo.forecast.daily.${key}.${index}`;
         const metadata = getParameterMetadata(key);
-        values.push({ path, value });
-        meta.push({ path, value: metadata });
+        allValues.push({ path, value });
+        allMeta.push({ path, value: metadata });
       });
-
-      if (values.length === 0) return;
-
-      const delta: SignalKDelta = {
-        context: "vessels.self",
-        updates: [
-          {
-            $source: sourceLabel,
-            timestamp: new Date().toISOString(),
-            values,
-            meta,
-          },
-        ],
-      };
-
-      app.handleMessage(plugin.id, delta);
     });
 
-    app.debug(`Published ${forecasts.length} daily ${packageType} forecasts`);
+    if (allValues.length === 0) return;
+
+    // Send all values in one delta message
+    const delta: SignalKDelta = {
+      context: "vessels.self",
+      updates: [
+        {
+          $source: sourceLabel,
+          timestamp: new Date().toISOString(),
+          values: allValues,
+          meta: allMeta,
+        },
+      ],
+    };
+
+    app.handleMessage(plugin.id, delta);
+    app.debug(`Published ${forecasts.length} daily ${packageType} forecasts (${allValues.length} values in 1 message)`);
+  };
+
+  // Fetch forecasts for a moving vessel (position-specific forecasts along predicted route)
+  const fetchForecastForMovingVessel = async (
+    config: PluginConfig,
+  ): Promise<void> => {
+    if (
+      !state.currentPosition ||
+      !state.currentHeading ||
+      !state.currentSOG ||
+      !isVesselMoving(state.currentSOG, config.movingSpeedThreshold) ||
+      !state.movingForecastEngaged
+    ) {
+      app.debug(
+        "Vessel not moving, missing navigation data, or moving forecast not engaged, falling back to stationary forecast",
+      );
+      return fetchAndPublishForecasts(config);
+    }
+
+    app.debug(
+      `Vessel moving at ${(state.currentSOG * 1.943844).toFixed(1)} knots (threshold: ${config.movingSpeedThreshold} knots), heading ${radToDeg(state.currentHeading).toFixed(1)}°`,
+    );
+    app.debug(
+      `Fetching position-specific forecasts for ${config.maxForecastHours} hours`,
+    );
+
+    // Capture validated state for use in helper functions
+    const currentPosition = state.currentPosition!;
+    const currentHeading = state.currentHeading!;
+    const currentSOG = state.currentSOG!;
+
+    const now = new Date();
+    const currentHour = new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
+      now.getHours(),
+      0,
+      0,
+      0,
+    );
+
+    // Helper function to fetch forecast for a single hour
+    const fetchHourForecast = async (hour: number): Promise<{
+      hour: number;
+      predictedPos: Position;
+      targetTime: Date;
+      weatherData: OpenMeteoWeatherResponse | null;
+      marineData: OpenMeteoMarineResponse | null;
+    } | null> => {
+      const predictedPos = calculateFuturePosition(
+        currentPosition,
+        currentHeading,
+        currentSOG,
+        hour,
+      );
+      const targetTime = new Date(currentHour.getTime() + hour * 3600000);
+
+      app.debug(
+        `Hour ${hour}: Fetching weather for position ${predictedPos.latitude.toFixed(6)}, ${predictedPos.longitude.toFixed(6)}`,
+      );
+
+      try {
+        const weatherData = await fetchWeatherData(predictedPos, config);
+        const marineData =
+          config.enableMarineHourly || config.enableMarineDaily
+            ? await fetchMarineData(predictedPos, config)
+            : null;
+
+        return { hour, predictedPos, targetTime, weatherData, marineData };
+      } catch (err) {
+        app.debug(`Hour ${hour}: Fetch failed - ${err}`);
+        return null;
+      }
+    };
+
+    try {
+      // Fetch forecasts in parallel batches (5 concurrent requests)
+      const BATCH_SIZE = 5;
+      const BATCH_DELAY_MS = 200;
+
+      const allResults: Array<{
+        hour: number;
+        predictedPos: Position;
+        targetTime: Date;
+        weatherData: OpenMeteoWeatherResponse | null;
+        marineData: OpenMeteoMarineResponse | null;
+      }> = [];
+
+      app.debug(
+        `Fetching ${config.maxForecastHours} hourly forecasts in batches of ${BATCH_SIZE}`,
+      );
+
+      for (
+        let batchStart = 0;
+        batchStart < config.maxForecastHours;
+        batchStart += BATCH_SIZE
+      ) {
+        const batchEnd = Math.min(
+          batchStart + BATCH_SIZE,
+          config.maxForecastHours,
+        );
+        const batchHours = Array.from(
+          { length: batchEnd - batchStart },
+          (_, i) => batchStart + i,
+        );
+
+        app.debug(`Fetching batch: hours ${batchStart}-${batchEnd - 1}`);
+
+        const batchResults = await Promise.all(
+          batchHours.map((hour) => fetchHourForecast(hour)),
+        );
+
+        batchResults.forEach((result) => {
+          if (result) {
+            allResults.push(result);
+          }
+        });
+
+        if (batchEnd < config.maxForecastHours) {
+          await new Promise((resolve) => setTimeout(resolve, BATCH_DELAY_MS));
+        }
+      }
+
+      // Process and publish weather hourly forecasts
+      if (config.enableHourlyWeather) {
+        const hourlyWeatherForecasts: Record<string, any>[] = [];
+
+        allResults.forEach((result) => {
+          if (result.weatherData?.hourly) {
+            const hourlyData = result.weatherData.hourly;
+            const targetHour = result.targetTime.getHours();
+
+            // Find matching hour in the response
+            const times = hourlyData.time || [];
+            for (let i = 0; i < times.length; i++) {
+              const forecastTime = new Date(times[i]);
+              if (
+                forecastTime.getFullYear() === result.targetTime.getFullYear() &&
+                forecastTime.getMonth() === result.targetTime.getMonth() &&
+                forecastTime.getDate() === result.targetTime.getDate() &&
+                forecastTime.getHours() === targetHour
+              ) {
+                const forecast: Record<string, any> = {
+                  timestamp: forecastTime.toISOString(),
+                  predictedLatitude: result.predictedPos.latitude,
+                  predictedLongitude: result.predictedPos.longitude,
+                  vesselMoving: true,
+                };
+
+                // Extract all hourly fields for this time index
+                Object.keys(hourlyData).forEach((key) => {
+                  if (key !== "time") {
+                    const values = (hourlyData as Record<string, any>)[key];
+                    if (Array.isArray(values)) {
+                      forecast[key] = values[i];
+                    }
+                  }
+                });
+
+                hourlyWeatherForecasts.push(forecast);
+                break;
+              }
+            }
+          }
+        });
+
+        if (hourlyWeatherForecasts.length > 0) {
+          publishHourlyPackage(hourlyWeatherForecasts, "weather");
+          app.debug(
+            `Published ${hourlyWeatherForecasts.length} position-specific weather forecasts`,
+          );
+        }
+      }
+
+      // Process and publish marine hourly forecasts
+      if (config.enableMarineHourly) {
+        const hourlyMarineForecasts: Record<string, any>[] = [];
+
+        allResults.forEach((result) => {
+          if (result.marineData?.hourly) {
+            const hourlyData = result.marineData.hourly;
+            const targetHour = result.targetTime.getHours();
+
+            const times = hourlyData.time || [];
+            for (let i = 0; i < times.length; i++) {
+              const forecastTime = new Date(times[i]);
+              if (
+                forecastTime.getFullYear() === result.targetTime.getFullYear() &&
+                forecastTime.getMonth() === result.targetTime.getMonth() &&
+                forecastTime.getDate() === result.targetTime.getDate() &&
+                forecastTime.getHours() === targetHour
+              ) {
+                const forecast: Record<string, any> = {
+                  timestamp: forecastTime.toISOString(),
+                  predictedLatitude: result.predictedPos.latitude,
+                  predictedLongitude: result.predictedPos.longitude,
+                  vesselMoving: true,
+                };
+
+                Object.keys(hourlyData).forEach((key) => {
+                  if (key !== "time") {
+                    const values = (hourlyData as Record<string, any>)[key];
+                    if (Array.isArray(values)) {
+                      forecast[key] = values[i];
+                    }
+                  }
+                });
+
+                hourlyMarineForecasts.push(forecast);
+                break;
+              }
+            }
+          }
+        });
+
+        if (hourlyMarineForecasts.length > 0) {
+          publishHourlyPackage(hourlyMarineForecasts, "marine");
+          app.debug(
+            `Published ${hourlyMarineForecasts.length} position-specific marine forecasts`,
+          );
+        }
+      }
+
+      // Daily forecasts still use current position
+      if (config.enableDailyWeather && allResults[0]?.weatherData) {
+        const dailyWeather = processDailyWeatherForecast(
+          allResults[0].weatherData,
+          config.maxForecastDays,
+        );
+        if (dailyWeather.length > 0) {
+          publishDailyPackage(dailyWeather, "weather");
+        }
+      }
+
+      if (config.enableMarineDaily && allResults[0]?.marineData) {
+        const dailyMarine = processDailyMarineForecast(
+          allResults[0].marineData,
+          config.maxForecastDays,
+        );
+        if (dailyMarine.length > 0) {
+          publishDailyPackage(dailyMarine, "marine");
+        }
+      }
+
+      state.lastForecastUpdate = Date.now();
+      app.setPluginStatus("Active - Moving vessel forecasts updated");
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      app.error(`Failed to fetch position-specific forecasts: ${errorMsg}`);
+      app.debug("Falling back to stationary forecast");
+      return fetchAndPublishForecasts(config);
+    }
   };
 
   // Fetch and publish all forecasts
@@ -1006,13 +1542,12 @@ export = function (app: SignalKApp): SignalKPlugin {
 
     const position = state.currentPosition;
 
-    // Fetch weather data
-    const weatherData = await fetchWeatherData(position, config);
-
-    // Fetch marine data
-    const marineData = config.enableMarineHourly || config.enableMarineDaily
-      ? await fetchMarineData(position, config)
-      : null;
+    // Fetch weather and marine data in parallel
+    const needsMarine = config.enableMarineHourly || config.enableMarineDaily;
+    const [weatherData, marineData] = await Promise.all([
+      fetchWeatherData(position, config),
+      needsMarine ? fetchMarineData(position, config) : Promise.resolve(null),
+    ]);
 
     if (!weatherData && !marineData) {
       app.error("Failed to fetch any forecast data");
@@ -1023,14 +1558,14 @@ export = function (app: SignalKApp): SignalKPlugin {
     if (config.enableHourlyWeather && weatherData) {
       const hourlyWeather = processHourlyWeatherForecast(weatherData, config.maxForecastHours);
       if (hourlyWeather.length > 0) {
-        await publishHourlyPackage(hourlyWeather, "weather");
+        publishHourlyPackage(hourlyWeather, "weather");
       }
     }
 
     if (config.enableMarineHourly && marineData) {
       const hourlyMarine = processHourlyMarineForecast(marineData, config.maxForecastHours);
       if (hourlyMarine.length > 0) {
-        await publishHourlyPackage(hourlyMarine, "marine");
+        publishHourlyPackage(hourlyMarine, "marine");
       }
     }
 
@@ -1053,85 +1588,86 @@ export = function (app: SignalKApp): SignalKPlugin {
     app.setPluginStatus("Active - Forecasts updated");
   };
 
-  // Weather API provider implementation
+  // Weather API provider implementation (using SignalK-aligned field names)
   const convertToWeatherAPIForecast = (
     forecastData: any,
     type: WeatherForecastType,
   ): WeatherData => {
-    const isDaily = type === "daily";
-
     return {
       date: forecastData.timestamp || forecastData.date || new Date().toISOString(),
       type,
       description: getWeatherDescription(
-        forecastData.weather_code,
+        forecastData.weatherCode,
         "Open-Meteo weather",
       ),
       longDescription: getWeatherLongDescription(
-        forecastData.weather_code,
+        forecastData.weatherCode,
         "Open-Meteo weather forecast",
       ),
-      icon: getWeatherIcon(forecastData.weather_code, forecastData.is_day),
+      icon: getWeatherIcon(forecastData.weatherCode, forecastData.isDaylight),
       outside: {
-        temperature: forecastData.temperature_2m,
-        maxTemperature: forecastData.temperature_2m_max,
-        minTemperature: forecastData.temperature_2m_min,
-        feelsLikeTemperature: forecastData.apparent_temperature || forecastData.apparent_temperature_max,
-        pressure: forecastData.pressure_msl,
-        relativeHumidity: forecastData.relative_humidity_2m,
-        uvIndex: forecastData.uv_index || forecastData.uv_index_max,
-        cloudCover: forecastData.cloud_cover,
-        precipitationVolume: forecastData.precipitation || forecastData.precipitation_sum,
-        dewPointTemperature: forecastData.dew_point_2m,
+        temperature: forecastData.airTemperature,
+        maxTemperature: forecastData.airTempHigh,
+        minTemperature: forecastData.airTempLow,
+        feelsLikeTemperature: forecastData.feelsLike || forecastData.feelsLikeHigh,
+        pressure: forecastData.seaLevelPressure,
+        relativeHumidity: forecastData.relativeHumidity,
+        uvIndex: forecastData.uvIndex || forecastData.uvIndexMax,
+        cloudCover: forecastData.cloudCover,
+        precipitationVolume: forecastData.precip || forecastData.precipSum,
+        dewPointTemperature: forecastData.dewPoint,
         horizontalVisibility: forecastData.visibility,
-        precipitationProbability: forecastData.precipitation_probability || forecastData.precipitation_probability_max,
-        lowCloudCover: forecastData.cloud_cover_low,
-        midCloudCover: forecastData.cloud_cover_mid,
-        highCloudCover: forecastData.cloud_cover_high,
-        solarRadiation: forecastData.shortwave_radiation || forecastData.shortwave_radiation_sum,
-        directNormalIrradiance: forecastData.direct_normal_irradiance,
-        diffuseHorizontalIrradiance: forecastData.diffuse_radiation,
+        precipitationProbability: forecastData.precipProbability || forecastData.precipProbabilityMax,
+        lowCloudCover: forecastData.lowCloudCover,
+        midCloudCover: forecastData.midCloudCover,
+        highCloudCover: forecastData.highCloudCover,
+        solarRadiation: forecastData.solarRadiation || forecastData.solarRadiationSum,
+        directNormalIrradiance: forecastData.irradianceDirectNormal,
+        diffuseHorizontalIrradiance: forecastData.diffuseRadiation,
       },
       water: {
-        temperature: forecastData.sea_surface_temperature,
-        waveSignificantHeight: forecastData.wave_height || forecastData.wave_height_max,
-        wavePeriod: forecastData.wave_period || forecastData.wave_period_max,
-        waveDirection: forecastData.wave_direction || forecastData.wave_direction_dominant,
-        windWaveHeight: forecastData.wind_wave_height || forecastData.wind_wave_height_max,
-        windWavePeriod: forecastData.wind_wave_period || forecastData.wind_wave_period_max,
-        windWaveDirection: forecastData.wind_wave_direction || forecastData.wind_wave_direction_dominant,
-        swellHeight: forecastData.swell_wave_height || forecastData.swell_wave_height_max,
-        swellPeriod: forecastData.swell_wave_period || forecastData.swell_wave_period_max,
-        swellDirection: forecastData.swell_wave_direction || forecastData.swell_wave_direction_dominant,
-        surfaceCurrentSpeed: forecastData.ocean_current_velocity,
-        surfaceCurrentDirection: forecastData.ocean_current_direction,
-        swellPeakPeriod: forecastData.swell_wave_peak_period || forecastData.swell_wave_peak_period_max,
-        windWavePeakPeriod: forecastData.wind_wave_peak_period || forecastData.wind_wave_peak_period_max,
+        temperature: forecastData.seaSurfaceTemperature,
+        waveSignificantHeight: forecastData.significantWaveHeight || forecastData.significantWaveHeightMax,
+        wavePeriod: forecastData.meanWavePeriod || forecastData.meanWavePeriodMax,
+        waveDirection: forecastData.meanWaveDirection || forecastData.meanWaveDirectionDominant,
+        windWaveHeight: forecastData.windWaveHeight || forecastData.windWaveHeightMax,
+        windWavePeriod: forecastData.windWavePeriod || forecastData.windWavePeriodMax,
+        windWaveDirection: forecastData.windWaveDirection || forecastData.windWaveDirectionDominant,
+        swellHeight: forecastData.swellSignificantHeight || forecastData.swellSignificantHeightMax,
+        swellPeriod: forecastData.swellMeanPeriod || forecastData.swellMeanPeriodMax,
+        swellDirection: forecastData.swellMeanDirection || forecastData.swellMeanDirectionDominant,
+        surfaceCurrentSpeed: forecastData.currentVelocity,
+        surfaceCurrentDirection: forecastData.currentDirection,
+        swellPeakPeriod: forecastData.swellPeakPeriod || forecastData.swellPeakPeriodMax,
+        windWavePeakPeriod: forecastData.windWavePeakPeriod || forecastData.windWavePeakPeriodMax,
       },
       wind: {
-        speedTrue: forecastData.wind_speed_10m || forecastData.wind_speed_10m_max,
-        directionTrue: forecastData.wind_direction_10m || forecastData.wind_direction_10m_dominant,
-        gust: forecastData.wind_gusts_10m || forecastData.wind_gusts_10m_max,
+        speedTrue: forecastData.windAvg || forecastData.windAvgMax,
+        directionTrue: forecastData.windDirection || forecastData.windDirectionDominant,
+        gust: forecastData.windGust || forecastData.windGustMax,
       },
       sun: {
         sunrise: forecastData.sunrise,
         sunset: forecastData.sunset,
-        sunshineDuration: forecastData.sunshine_duration,
-        isDaylight: forecastData.is_day === 1,
+        sunshineDuration: forecastData.sunshineDuration,
+        // isDaylight: true if 1/true, false if 0/false, undefined if not present (daily forecasts)
+        isDaylight: forecastData.isDaylight !== undefined
+          ? forecastData.isDaylight === 1 || forecastData.isDaylight === true
+          : undefined,
       },
     };
   };
 
-  // Get hourly forecasts from SignalK tree
+  // Get hourly forecasts from SignalK tree (using SignalK-aligned field names)
   const getHourlyForecasts = (maxCount: number): WeatherData[] => {
     const forecasts: WeatherData[] = [];
 
     try {
-      // Read forecast data from SignalK tree
+      // Read forecast data from SignalK tree using translated field names
       let forecastCount = 0;
       for (let i = 0; i < maxCount + 10; i++) {
         const temp = app.getSelfPath(
-          `environment.outside.openmeteo.forecast.hourly.temperature_2m.${i}`,
+          `environment.outside.openmeteo.forecast.hourly.airTemperature.${i}`,
         );
         if (temp && temp.value !== undefined) {
           forecastCount = i + 1;
@@ -1144,42 +1680,43 @@ export = function (app: SignalKApp): SignalKPlugin {
 
       for (let i = 0; i < actualCount; i++) {
         const forecastData: any = {};
+        // Use SignalK-aligned field names (translated names)
         const fields = [
-          "temperature_2m",
-          "relative_humidity_2m",
-          "dew_point_2m",
-          "apparent_temperature",
-          "precipitation_probability",
-          "precipitation",
-          "weather_code",
-          "pressure_msl",
-          "cloud_cover",
-          "cloud_cover_low",
-          "cloud_cover_mid",
-          "cloud_cover_high",
+          "airTemperature",
+          "relativeHumidity",
+          "dewPoint",
+          "feelsLike",
+          "precipProbability",
+          "precip",
+          "weatherCode",
+          "seaLevelPressure",
+          "cloudCover",
+          "lowCloudCover",
+          "midCloudCover",
+          "highCloudCover",
           "visibility",
-          "wind_speed_10m",
-          "wind_direction_10m",
-          "wind_gusts_10m",
-          "uv_index",
-          "is_day",
-          "sunshine_duration",
-          "shortwave_radiation",
-          "direct_radiation",
-          "diffuse_radiation",
-          "direct_normal_irradiance",
-          "wave_height",
-          "wave_direction",
-          "wave_period",
-          "wind_wave_height",
-          "wind_wave_direction",
-          "wind_wave_period",
-          "swell_wave_height",
-          "swell_wave_direction",
-          "swell_wave_period",
-          "ocean_current_velocity",
-          "ocean_current_direction",
-          "sea_surface_temperature",
+          "windAvg",
+          "windDirection",
+          "windGust",
+          "uvIndex",
+          "isDaylight",
+          "sunshineDuration",
+          "solarRadiation",
+          "directRadiation",
+          "diffuseRadiation",
+          "irradianceDirectNormal",
+          "significantWaveHeight",
+          "meanWaveDirection",
+          "meanWavePeriod",
+          "windWaveHeight",
+          "windWaveDirection",
+          "windWavePeriod",
+          "swellSignificantHeight",
+          "swellMeanDirection",
+          "swellMeanPeriod",
+          "currentVelocity",
+          "currentDirection",
+          "seaSurfaceTemperature",
         ];
 
         fields.forEach((field) => {
@@ -1207,7 +1744,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     return forecasts;
   };
 
-  // Get daily forecasts from SignalK tree
+  // Get daily forecasts from SignalK tree (using SignalK-aligned field names)
   const getDailyForecasts = (maxCount: number): WeatherData[] => {
     const forecasts: WeatherData[] = [];
 
@@ -1215,7 +1752,7 @@ export = function (app: SignalKApp): SignalKPlugin {
       let forecastCount = 0;
       for (let i = 0; i < maxCount + 2; i++) {
         const temp = app.getSelfPath(
-          `environment.outside.openmeteo.forecast.daily.temperature_2m_max.${i}`,
+          `environment.outside.openmeteo.forecast.daily.airTempHigh.${i}`,
         );
         if (temp && temp.value !== undefined) {
           forecastCount = i + 1;
@@ -1228,27 +1765,28 @@ export = function (app: SignalKApp): SignalKPlugin {
 
       for (let i = 0; i < actualCount; i++) {
         const forecastData: any = {};
+        // Use SignalK-aligned field names (translated names)
         const fields = [
-          "weather_code",
-          "temperature_2m_max",
-          "temperature_2m_min",
-          "apparent_temperature_max",
-          "apparent_temperature_min",
+          "weatherCode",
+          "airTempHigh",
+          "airTempLow",
+          "feelsLikeHigh",
+          "feelsLikeLow",
           "sunrise",
           "sunset",
-          "sunshine_duration",
-          "uv_index_max",
-          "precipitation_sum",
-          "precipitation_probability_max",
-          "wind_speed_10m_max",
-          "wind_gusts_10m_max",
-          "wind_direction_10m_dominant",
-          "wave_height_max",
-          "wave_direction_dominant",
-          "wave_period_max",
-          "swell_wave_height_max",
-          "swell_wave_direction_dominant",
-          "swell_wave_period_max",
+          "sunshineDuration",
+          "uvIndexMax",
+          "precipSum",
+          "precipProbabilityMax",
+          "windAvgMax",
+          "windGustMax",
+          "windDirectionDominant",
+          "significantWaveHeightMax",
+          "meanWaveDirectionDominant",
+          "meanWavePeriodMax",
+          "swellSignificantHeightMax",
+          "swellMeanDirectionDominant",
+          "swellMeanPeriodMax",
         ];
 
         fields.forEach((field) => {
@@ -1353,9 +1891,17 @@ export = function (app: SignalKApp): SignalKPlugin {
                   app.debug(
                     `Initial position: ${pos.latitude}, ${pos.longitude}`,
                   );
-                  // Trigger initial forecast fetch
+                  // Trigger initial forecast fetch (use moving vessel if appropriate)
                   if (state.currentConfig) {
-                    fetchAndPublishForecasts(state.currentConfig);
+                    if (
+                      state.currentSOG &&
+                      isVesselMoving(state.currentSOG, state.currentConfig.movingSpeedThreshold) &&
+                      state.movingForecastEngaged
+                    ) {
+                      fetchForecastForMovingVessel(state.currentConfig);
+                    } else {
+                      fetchAndPublishForecasts(state.currentConfig);
+                    }
                   }
                 } else {
                   state.currentPosition = newPosition;
@@ -1365,6 +1911,21 @@ export = function (app: SignalKApp): SignalKPlugin {
               state.currentHeading = v.value as number;
             } else if (v.path === "navigation.speedOverGround" && v.value !== null) {
               state.currentSOG = v.value as number;
+
+              // Auto-engage moving forecast if enabled and speed exceeds threshold
+              if (
+                state.currentConfig?.enableAutoMovingForecast &&
+                isVesselMoving(
+                  state.currentSOG,
+                  state.currentConfig.movingSpeedThreshold,
+                ) &&
+                !state.movingForecastEngaged
+              ) {
+                state.movingForecastEngaged = true;
+                app.debug(
+                  `Auto-enabled moving forecast due to vessel movement exceeding ${state.currentConfig.movingSpeedThreshold} knots`,
+                );
+              }
             }
           });
         });
@@ -1408,18 +1969,33 @@ export = function (app: SignalKApp): SignalKPlugin {
     // Setup position subscription
     setupPositionSubscription(config);
 
+    // Helper to determine which fetch function to use
+    const doForecastFetch = async () => {
+      if (
+        state.currentSOG &&
+        isVesselMoving(state.currentSOG, config.movingSpeedThreshold) &&
+        state.movingForecastEngaged
+      ) {
+        app.debug("Using position-specific forecasting for moving vessel");
+        await fetchForecastForMovingVessel(config);
+      } else {
+        app.debug("Using standard forecasting for stationary vessel");
+        await fetchAndPublishForecasts(config);
+      }
+    };
+
     // Setup forecast interval
     const intervalMs = config.forecastInterval * 60 * 1000;
-    state.forecastInterval = setInterval(() => {
+    state.forecastInterval = setInterval(async () => {
       if (state.forecastEnabled && state.currentPosition) {
-        fetchAndPublishForecasts(config);
+        await doForecastFetch();
       }
     }, intervalMs);
 
     // Initial fetch if position is available
-    setTimeout(() => {
+    setTimeout(async () => {
       if (state.currentPosition) {
-        fetchAndPublishForecasts(config);
+        await doForecastFetch();
       } else {
         app.debug("No position available yet, waiting for position subscription");
         app.setPluginStatus("Waiting for position...");

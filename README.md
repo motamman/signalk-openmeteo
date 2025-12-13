@@ -10,6 +10,7 @@ A SignalK plugin that provides position-based weather and marine forecast data f
 - **Position-Based**: Automatically updates forecasts based on vessel position
 - **Free Tier**: No API key required for non-commercial use
 - **SignalK Weather API**: Full compliance with Weather API v2 specification
+- **Consistent Naming**: Follows signalk-weatherflow naming conventions for cross-plugin compatibility
 
 ## Installation
 
@@ -72,82 +73,99 @@ GET /signalk/v2/api/weather/observations?provider=signalk-open-meteo
 
 ## SignalK Data Paths
 
-All data is published under `environment.outside.openmeteo.forecast.*`:
+All data is published under `environment.outside.openmeteo.forecast.*` using SignalK-aligned camelCase field names (following signalk-weatherflow conventions):
 
 ### Hourly Weather Data
 
 | Path | Description | Units |
 |------|-------------|-------|
-| `hourly.temperature_2m.{n}` | Air temperature at 2m | K |
-| `hourly.relative_humidity_2m.{n}` | Relative humidity | ratio (0-1) |
-| `hourly.dew_point_2m.{n}` | Dew point temperature | K |
-| `hourly.apparent_temperature.{n}` | Feels like temperature | K |
-| `hourly.precipitation_probability.{n}` | Precipitation probability | ratio (0-1) |
-| `hourly.precipitation.{n}` | Precipitation amount | m |
-| `hourly.weather_code.{n}` | WMO weather code | - |
-| `hourly.pressure_msl.{n}` | Sea level pressure | Pa |
-| `hourly.cloud_cover.{n}` | Total cloud cover | ratio (0-1) |
-| `hourly.cloud_cover_low.{n}` | Low cloud cover | ratio (0-1) |
-| `hourly.cloud_cover_mid.{n}` | Mid cloud cover | ratio (0-1) |
-| `hourly.cloud_cover_high.{n}` | High cloud cover | ratio (0-1) |
+| `hourly.airTemperature.{n}` | Air temperature at 2m | K |
+| `hourly.relativeHumidity.{n}` | Relative humidity | ratio (0-1) |
+| `hourly.dewPoint.{n}` | Dew point temperature | K |
+| `hourly.feelsLike.{n}` | Feels like temperature | K |
+| `hourly.precipProbability.{n}` | Precipitation probability | ratio (0-1) |
+| `hourly.precip.{n}` | Precipitation amount | m |
+| `hourly.weatherCode.{n}` | WMO weather code | - |
+| `hourly.seaLevelPressure.{n}` | Sea level pressure | Pa |
+| `hourly.cloudCover.{n}` | Total cloud cover | ratio (0-1) |
+| `hourly.lowCloudCover.{n}` | Low cloud cover | ratio (0-1) |
+| `hourly.midCloudCover.{n}` | Mid cloud cover | ratio (0-1) |
+| `hourly.highCloudCover.{n}` | High cloud cover | ratio (0-1) |
 | `hourly.visibility.{n}` | Horizontal visibility | m |
-| `hourly.wind_speed_10m.{n}` | Wind speed at 10m | m/s |
-| `hourly.wind_direction_10m.{n}` | Wind direction | rad |
-| `hourly.wind_gusts_10m.{n}` | Wind gusts | m/s |
-| `hourly.uv_index.{n}` | UV index | - |
-| `hourly.is_day.{n}` | Day/night indicator | 0/1 |
-| `hourly.sunshine_duration.{n}` | Sunshine duration | s |
-| `hourly.shortwave_radiation.{n}` | Solar radiation | W/m2 |
+| `hourly.windAvg.{n}` | Wind speed at 10m | m/s |
+| `hourly.windDirection.{n}` | Wind direction | rad |
+| `hourly.windGust.{n}` | Wind gusts | m/s |
+| `hourly.uvIndex.{n}` | UV index | - |
+| `hourly.isDaylight.{n}` | Day/night indicator | 0/1 |
+| `hourly.sunshineDuration.{n}` | Sunshine duration | s |
+| `hourly.solarRadiation.{n}` | Solar radiation | W/m2 |
 
 ### Hourly Marine Data
 
 | Path | Description | Units |
 |------|-------------|-------|
-| `hourly.wave_height.{n}` | Significant wave height | m |
-| `hourly.wave_direction.{n}` | Wave direction | rad |
-| `hourly.wave_period.{n}` | Wave period | s |
-| `hourly.wind_wave_height.{n}` | Wind wave height | m |
-| `hourly.wind_wave_direction.{n}` | Wind wave direction | rad |
-| `hourly.wind_wave_period.{n}` | Wind wave period | s |
-| `hourly.swell_wave_height.{n}` | Swell height | m |
-| `hourly.swell_wave_direction.{n}` | Swell direction | rad |
-| `hourly.swell_wave_period.{n}` | Swell period | s |
-| `hourly.ocean_current_velocity.{n}` | Current speed | m/s |
-| `hourly.ocean_current_direction.{n}` | Current direction | rad |
-| `hourly.sea_surface_temperature.{n}` | Sea surface temp | K |
+| `hourly.significantWaveHeight.{n}` | Significant wave height | m |
+| `hourly.meanWaveDirection.{n}` | Wave direction | rad |
+| `hourly.meanWavePeriod.{n}` | Wave period | s |
+| `hourly.windWaveHeight.{n}` | Wind wave height | m |
+| `hourly.windWaveDirection.{n}` | Wind wave direction | rad |
+| `hourly.windWavePeriod.{n}` | Wind wave period | s |
+| `hourly.swellSignificantHeight.{n}` | Swell height | m |
+| `hourly.swellMeanDirection.{n}` | Swell direction | rad |
+| `hourly.swellMeanPeriod.{n}` | Swell period | s |
+| `hourly.currentVelocity.{n}` | Current speed | m/s |
+| `hourly.currentDirection.{n}` | Current direction | rad |
+| `hourly.seaSurfaceTemperature.{n}` | Sea surface temp | K |
 
 ### Daily Weather Data
 
 | Path | Description | Units |
 |------|-------------|-------|
-| `daily.weather_code.{n}` | WMO weather code | - |
-| `daily.temperature_2m_max.{n}` | Maximum temperature | K |
-| `daily.temperature_2m_min.{n}` | Minimum temperature | K |
-| `daily.apparent_temperature_max.{n}` | Max feels like | K |
-| `daily.apparent_temperature_min.{n}` | Min feels like | K |
+| `daily.weatherCode.{n}` | WMO weather code | - |
+| `daily.airTempHigh.{n}` | Maximum temperature | K |
+| `daily.airTempLow.{n}` | Minimum temperature | K |
+| `daily.feelsLikeHigh.{n}` | Max feels like | K |
+| `daily.feelsLikeLow.{n}` | Min feels like | K |
 | `daily.sunrise.{n}` | Sunrise time | ISO8601 |
 | `daily.sunset.{n}` | Sunset time | ISO8601 |
-| `daily.precipitation_sum.{n}` | Total precipitation | m |
-| `daily.precipitation_probability_max.{n}` | Max precip probability | ratio (0-1) |
-| `daily.wind_speed_10m_max.{n}` | Maximum wind speed | m/s |
-| `daily.wind_gusts_10m_max.{n}` | Maximum wind gusts | m/s |
-| `daily.wind_direction_10m_dominant.{n}` | Dominant wind direction | rad |
-| `daily.uv_index_max.{n}` | Maximum UV index | - |
+| `daily.precipSum.{n}` | Total precipitation | m |
+| `daily.precipProbabilityMax.{n}` | Max precip probability | ratio (0-1) |
+| `daily.windAvgMax.{n}` | Maximum wind speed | m/s |
+| `daily.windGustMax.{n}` | Maximum wind gusts | m/s |
+| `daily.windDirectionDominant.{n}` | Dominant wind direction | rad |
+| `daily.uvIndexMax.{n}` | Maximum UV index | - |
 
 ### Daily Marine Data
 
 | Path | Description | Units |
 |------|-------------|-------|
-| `daily.wave_height_max.{n}` | Maximum wave height | m |
-| `daily.wave_direction_dominant.{n}` | Dominant wave direction | rad |
-| `daily.wave_period_max.{n}` | Maximum wave period | s |
-| `daily.swell_wave_height_max.{n}` | Maximum swell height | m |
-| `daily.swell_wave_direction_dominant.{n}` | Dominant swell direction | rad |
-| `daily.swell_wave_period_max.{n}` | Maximum swell period | s |
+| `daily.significantWaveHeightMax.{n}` | Maximum wave height | m |
+| `daily.meanWaveDirectionDominant.{n}` | Dominant wave direction | rad |
+| `daily.meanWavePeriodMax.{n}` | Maximum wave period | s |
+| `daily.swellSignificantHeightMax.{n}` | Maximum swell height | m |
+| `daily.swellMeanDirectionDominant.{n}` | Dominant swell direction | rad |
+| `daily.swellMeanPeriodMax.{n}` | Maximum swell period | s |
+
+### Field Name Mapping
+
+This plugin translates Open-Meteo API field names to SignalK-aligned camelCase names for consistency with other SignalK weather plugins:
+
+| Open-Meteo API | SignalK Path |
+|----------------|--------------|
+| `temperature_2m` | `airTemperature` |
+| `wind_speed_10m` | `windAvg` |
+| `wind_direction_10m` | `windDirection` |
+| `pressure_msl` | `seaLevelPressure` |
+| `relative_humidity_2m` | `relativeHumidity` |
+| `precipitation` | `precip` |
+| `precipitation_probability` | `precipProbability` |
+| `wave_height` | `significantWaveHeight` |
+| `swell_wave_height` | `swellSignificantHeight` |
+| `ocean_current_velocity` | `currentVelocity` |
 
 ## WMO Weather Codes
 
-The `weather_code` field uses WMO 4677 codes:
+The `weatherCode` field uses WMO 4677 codes:
 
 | Code | Description |
 |------|-------------|
