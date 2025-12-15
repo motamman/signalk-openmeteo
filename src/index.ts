@@ -102,15 +102,80 @@ export = function (app: SignalKApp): SignalKPlugin {
     99: "Thunderstorm with heavy hail, dangerous conditions",
   };
 
+  // Helper to determine if a given timestamp is during daylight hours
+  // Converts UTC timestamp to local time using utcOffsetSeconds before comparing to local sunrise/sunset
+  const isDaytime = (
+    timestamp: string | undefined,
+    sunrise: string | undefined,
+    sunset: string | undefined,
+    utcOffsetSeconds?: number,
+  ): boolean | undefined => {
+    if (!timestamp || !sunrise || !sunset) return undefined;
+
+    try {
+      // Parse the forecast timestamp
+      const forecastDate = new Date(timestamp);
+      if (isNaN(forecastDate.getTime())) return undefined;
+
+      // Convert UTC forecast time to local time using the offset
+      // utcOffsetSeconds is positive for timezones ahead of UTC (e.g., +18000 for UTC+5)
+      const offsetMs = (utcOffsetSeconds || 0) * 1000;
+      const localTimeMs = forecastDate.getTime() + offsetMs;
+      const localDate = new Date(localTimeMs);
+
+      // Extract local hours and minutes
+      const localHours = localDate.getUTCHours();
+      const localMinutes = localDate.getUTCMinutes();
+      const forecastMinutes = localHours * 60 + localMinutes;
+
+      // Extract sunrise time (already in local time from API with timezone: "auto")
+      const sunriseMatch = sunrise.match(/T(\d{2}):(\d{2})/);
+      const sunsetMatch = sunset.match(/T(\d{2}):(\d{2})/);
+      if (!sunriseMatch || !sunsetMatch) return undefined;
+
+      const sunriseMinutes = parseInt(sunriseMatch[1], 10) * 60 + parseInt(sunriseMatch[2], 10);
+      const sunsetMinutes = parseInt(sunsetMatch[1], 10) * 60 + parseInt(sunsetMatch[2], 10);
+
+      // Normal case: sunrise is before sunset (same day)
+      if (sunriseMinutes < sunsetMinutes) {
+        return forecastMinutes >= sunriseMinutes && forecastMinutes < sunsetMinutes;
+      }
+
+      // Edge case: sunset wraps past midnight (polar regions)
+      return forecastMinutes >= sunriseMinutes || forecastMinutes < sunsetMinutes;
+    } catch {
+      return undefined;
+    }
+  };
+
   // Get icon name from WMO code
-  // isDay: true/1 = day, false/0 = night, undefined = default to day (for daily forecasts)
+  // Uses sunrise/sunset to calculate day/night if available, otherwise falls back to isDay
   const getWeatherIcon = (
     wmoCode: number | undefined,
     isDay: boolean | number | undefined,
+    timestamp?: string,
+    sunrise?: string,
+    sunset?: string,
+    utcOffsetSeconds?: number,
   ): string | undefined => {
     if (wmoCode === undefined) return undefined;
-    // Default to day if isDay is undefined (e.g., daily forecasts don't have is_day field)
-    const dayNight = isDay === false || isDay === 0 ? "night" : "day";
+
+    let dayNight: string;
+
+    // Prefer calculating from sunrise/sunset if we have the data
+    if (timestamp && sunrise && sunset) {
+      const calculatedIsDay = isDaytime(timestamp, sunrise, sunset, utcOffsetSeconds);
+      if (calculatedIsDay !== undefined) {
+        dayNight = calculatedIsDay ? "day" : "night";
+      } else {
+        // Fall back to API's is_day field
+        dayNight = isDay === false || isDay === 0 ? "night" : "day";
+      }
+    } else {
+      // Default to day if isDay is undefined (e.g., daily forecasts don't have is_day field)
+      dayNight = isDay === false || isDay === 0 ? "night" : "day";
+    }
+
     return `wmo_${wmoCode}_${dayNight}.svg`;
   };
 
@@ -406,7 +471,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     const params = new URLSearchParams({
       latitude: position.latitude.toString(),
       longitude: position.longitude.toString(),
-      timezone: "UTC",
+      timezone: "auto",
       forecast_days: Math.min(config.maxForecastDays, 16).toString(),
     });
 
@@ -516,7 +581,7 @@ export = function (app: SignalKApp): SignalKPlugin {
     const params = new URLSearchParams({
       latitude: position.latitude.toString(),
       longitude: position.longitude.toString(),
-      timezone: "UTC",
+      timezone: "auto",
       forecast_days: Math.min(config.maxForecastDays, 8).toString(), // Marine API max is 8 days
     });
 
@@ -1554,6 +1619,26 @@ export = function (app: SignalKApp): SignalKPlugin {
       return;
     }
 
+    // Store the UTC offset for timezone conversion (used for day/night icon calculation)
+    if (weatherData?.utc_offset_seconds !== undefined) {
+      const delta: SignalKDelta = {
+        context: "vessels.self",
+        updates: [
+          {
+            $source: getSourceLabel("weather"),
+            timestamp: new Date().toISOString(),
+            values: [
+              {
+                path: "environment.outside.openmeteo.utcOffsetSeconds",
+                value: weatherData.utc_offset_seconds,
+              },
+            ],
+          },
+        ],
+      };
+      app.handleMessage(plugin.id, delta);
+    }
+
     // Process and publish hourly forecasts - separate packages like meteoblue
     if (config.enableHourlyWeather && weatherData) {
       const hourlyWeather = processHourlyWeatherForecast(weatherData, config.maxForecastHours);
@@ -1604,7 +1689,14 @@ export = function (app: SignalKApp): SignalKPlugin {
         forecastData.weatherCode,
         "Open-Meteo weather forecast",
       ),
-      icon: getWeatherIcon(forecastData.weatherCode, forecastData.isDaylight),
+      icon: getWeatherIcon(
+        forecastData.weatherCode,
+        forecastData.isDaylight,
+        forecastData.timestamp || forecastData.date,
+        forecastData.sunrise,
+        forecastData.sunset,
+        forecastData.utcOffsetSeconds,
+      ),
       outside: {
         temperature: forecastData.airTemperature,
         maxTemperature: forecastData.airTempHigh,
@@ -1663,6 +1755,33 @@ export = function (app: SignalKApp): SignalKPlugin {
     const forecasts: WeatherData[] = [];
 
     try {
+      // Read the UTC offset for timezone conversion
+      const utcOffsetData = app.getSelfPath("environment.outside.openmeteo.utcOffsetSeconds");
+      const utcOffsetSeconds = utcOffsetData?.value as number | undefined;
+
+      // First, read sunrise/sunset from daily forecasts to use for day/night calculation
+      // Build a map of date -> {sunrise, sunset}
+      const sunTimes: Map<string, { sunrise: string; sunset: string }> = new Map();
+      for (let dayIndex = 0; dayIndex < 16; dayIndex++) {
+        const sunriseData = app.getSelfPath(
+          `environment.outside.openmeteo.forecast.daily.sunrise.${dayIndex}`,
+        );
+        const sunsetData = app.getSelfPath(
+          `environment.outside.openmeteo.forecast.daily.sunset.${dayIndex}`,
+        );
+        if (sunriseData?.value && sunsetData?.value) {
+          // Extract the date part from sunrise (format: YYYY-MM-DD or ISO timestamp)
+          const sunriseStr = String(sunriseData.value);
+          const dateKey = sunriseStr.substring(0, 10); // Get YYYY-MM-DD
+          sunTimes.set(dateKey, {
+            sunrise: sunriseStr,
+            sunset: String(sunsetData.value),
+          });
+        } else {
+          break;
+        }
+      }
+
       // Read forecast data from SignalK tree using translated field names
       let forecastCount = 0;
       for (let i = 0; i < maxCount + 10; i++) {
@@ -1732,6 +1851,20 @@ export = function (app: SignalKApp): SignalKPlugin {
           const date = new Date();
           date.setHours(date.getHours() + i);
           forecastData.timestamp = date.toISOString();
+
+          // Look up sunrise/sunset for this forecast's date
+          const dateKey = date.toISOString().substring(0, 10); // YYYY-MM-DD
+          const sunData = sunTimes.get(dateKey);
+          if (sunData) {
+            forecastData.sunrise = sunData.sunrise;
+            forecastData.sunset = sunData.sunset;
+          }
+
+          // Add UTC offset for timezone conversion in day/night calculation
+          if (utcOffsetSeconds !== undefined) {
+            forecastData.utcOffsetSeconds = utcOffsetSeconds;
+          }
+
           forecasts.push(convertToWeatherAPIForecast(forecastData, "point"));
         }
       }
